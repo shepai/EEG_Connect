@@ -1,49 +1,82 @@
 import asyncio
-from bleak import BleakClient, uuids
+from bleak import BleakClient, BleakScanner
+import bleak
+import time
+import cv2
+import numpy as np
 
-# Replace with the MAC address of your Raspberry Pi Pico W
-pico_address = "30:C6:F7:22:D0:12"  # Update this with your Pico W's address
-# pico_address = "D8:3A:DD:8D:CF:DE"
+async def connect_to_esp():
+     devices = await BleakScanner.discover()
 
-# Service UUID (0x1848) - but we need to normalize it to 128-bit UUID
-SERVICE_UUID = uuids.normalize_uuid_16(0x1848)
-WRITE_CHARACTERISTIC_UUID = uuids.normalize_uuid_16(0x2A6E) # Central writes here
-READ_CHARACTERISTIC_UUID = uuids.normalize_uuid_16(0x2A6F)  # Central reads here
+     for device in devices:
+          print(device)  # Look for your ESP32 in the list
 
-async def send_data_task(client):
-    """Send data to the peripheral device."""
-    message = "Hello from Central!".encode("utf-8")
-    while True:
-        # print(f"Central sending: {message}")
-        await client.write_gatt_char(WRITE_CHARACTERISTIC_UUID, message)
-        await asyncio.sleep(2)
+     esp_address = "30:C6:F7:22:D0:12"  # Replace with your ESP32's MAC address
+     connected=False
+     while not connected:
+          try:
+               client = BleakClient(esp_address)
+               await client.connect()
+               print(f"Connected to {esp_address}")
+               connected=True
+          except bleak.exc.BleakDeviceNotFoundError:
+               pass
 
-async def receive_data_task(client):
-    """Receive data from the peripheral device."""
-    while True:
-        try:
-            # print("Central waiting for data from peripheral...")
-            response = await client.read_gatt_char(READ_CHARACTERISTIC_UUID)
-            print(f"Central received: {response.decode('utf-8')}")
-            await asyncio.sleep(1)
-        except Exception as e:
-            print(f"Error receiving data: {e}")
-            break
+     services = await client.get_services()
+     for service in services:
+          print(service)
+     # Example: Read/write characteristic UUID
+     char_uuid_write = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  # Replace with actual UUID
+     await client.write_gatt_char(char_uuid_write, b"Hello ESP32!")
+     char_uuid_read = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  # Replace with actual UUID
+     data = await client.read_gatt_char(char_uuid_read)
+     print("Received from ESP:", data)
+     # Initialize camera
+     cap = cv2.VideoCapture(0)
 
-async def connect_and_communicate(address):
-    """Connect to the peripheral and manage data exchange."""
-    print(f"Connecting to {address}...")
+     # Define codec
+     fourcc = cv2.VideoWriter_fourcc(*'XVID')
+     out = None
+     recording = False
+     data=[]
+     print("Press 'r' to start recording, 's' to stop, and 'q' to quit.")
 
-    async with BleakClient(address) as client:
-        print(f"Connected: {client.is_connected}")
+     while True:
+          ret, frame = cap.read()
+          if not ret:
+               break
+          
+          cv2.imshow('Video Feed', frame)
 
-        # Create tasks for sending and receiving data
-        tasks = [
-            asyncio.create_task(send_data_task(client)),
-            asyncio.create_task(receive_data_task(client)),
-        ]
-        await asyncio.gather(*tasks)
+          key = cv2.waitKey(1) & 0xFF
 
-# Run the connection and communication
-loop = asyncio.get_event_loop()
-loop.run_until_complete(connect_and_communicate(pico_address))
+          if key == ord('r') and not recording:
+               filename = f"recording_{time.strftime('%Y%m%d_%H%M%S')}"
+               print(f"Recording started: {filename}")
+               out = cv2.VideoWriter(filename+".avi", fourcc, 20.0, (frame.shape[1], frame.shape[0]))
+               recording = True
+               data_read = await client.read_gatt_char(char_uuid_read)
+               print("Received from ESP:", data_read)
+               data.append([time.time(),data_read])
+          if key == ord('s') and recording:
+               print("Recording stopped.")
+               recording = False
+               np.save(filename,np.array(data))
+               out.release()
+               out = None
+               data=[]
+          if recording and out is not None:
+               out.write(frame)
+
+          if key == ord('q'):  # Press 'q' to exit
+               break
+
+     # Cleanup
+     cap.release()
+     if out is not None:
+          out.release()
+     cv2.destroyAllWindows()
+
+
+
+asyncio.run(connect_to_esp())
