@@ -7,10 +7,11 @@ import numpy as np
 
 async def connect_to_esp():
      devices = await BleakScanner.discover()
-
-     for device in devices:
-          print(device)  # Look for your ESP32 in the list
-
+     def gather_device():
+          
+          for device in devices:
+               print(device)  # Look for your ESP32 in the list
+     
      esp_address = "30:C6:F7:22:D0:12"  # Replace with your ESP32's MAC address
      connected=False
      while not connected:
@@ -42,34 +43,46 @@ async def connect_to_esp():
      print("Press 'r' to start recording, 's' to stop, and 'q' to quit.")
 
      while True:
-          ret, frame = cap.read()
-          if not ret:
+          try:
+               ret, frame = cap.read()
+               if not ret:
+                    break
+               
+               cv2.imshow('Video Feed', frame)
+
+               key = cv2.waitKey(1) & 0xFF
+
+               if key == ord('r') and not recording:
+                    filename = f"recording_{time.strftime('%Y%m%d_%H%M%S')}"
+                    print(f"Recording started: {filename}")
+                    out = cv2.VideoWriter(filename+".avi", fourcc, 20.0, (frame.shape[1], frame.shape[0]))
+                    recording = True
+                    data_read = await client.read_gatt_char(char_uuid_read)
+                    print("Received from ESP:", data_read)
+                    data.append([time.time(),data_read])
+               if key == ord('s') and recording:
+                    print("Recording stopped.")
+                    recording = False
+                    np.save(filename,np.array(data))
+                    out.release()
+                    out = None
+                    data=[]
+               if recording and out is not None:
+                    out.write(frame)
+
+               if key == ord('q'):  # Press 'q' to exit
+                    break
+          except bleak.exc.BleakDeviceNotFoundError:
+            gather_device()
+          except OSError:
+               gather_device()
+          except asyncio.exceptions.TimeoutError:
+               gather_device()
+          except KeyboardInterrupt:
                break
-          
-          cv2.imshow('Video Feed', frame)
-
-          key = cv2.waitKey(1) & 0xFF
-
-          if key == ord('r') and not recording:
-               filename = f"recording_{time.strftime('%Y%m%d_%H%M%S')}"
-               print(f"Recording started: {filename}")
-               out = cv2.VideoWriter(filename+".avi", fourcc, 20.0, (frame.shape[1], frame.shape[0]))
-               recording = True
-               data_read = await client.read_gatt_char(char_uuid_read)
-               print("Received from ESP:", data_read)
-               data.append([time.time(),data_read])
-          if key == ord('s') and recording:
-               print("Recording stopped.")
-               recording = False
-               np.save(filename,np.array(data))
-               out.release()
-               out = None
-               data=[]
-          if recording and out is not None:
-               out.write(frame)
-
-          if key == ord('q'):  # Press 'q' to exit
-               break
+          except Exception as e:
+               print(e)
+               gather_device()
 
      # Cleanup
      cap.release()
