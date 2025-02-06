@@ -12,16 +12,15 @@ async def connect_to_esp():
             print(device)  # Look for your ESP32 in the list
     def save(filename,data):
         print(data)
-        file=open(filename+".csv","w")
-        file.write(str(data))
+        file=open(filename+".csv","w") #open csv
+        file.write(str(data)) #save data in bulk
         file.close()
     t1=time.time()
 
     cap = cv2.VideoCapture(0)
     # Define codec
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    out = None
-    recording = False
+    
     print("Press 'r' to start recording, 's' to stop, and 'q' to quit.")
     while 1:
         devices = await BleakScanner.discover()
@@ -42,22 +41,26 @@ async def connect_to_esp():
                 char_uuid_read = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  # Replace with actual UUID
                 data = await client.read_gatt_char(char_uuid_read)
                 print("Received from ESP:", data)
-                while 1:
-                    ret, frame = cap.read()
-                    if not ret:
+                out = None
+                recording = False
+                while 1: #once successfully connected loop forever (till erros happen)
+                    ret, frame = cap.read() #read camera
+                    if not ret: #if camera breaks 
                          break
                     key = cv2.waitKey(1) & 0xFF
-                    await client.write_gatt_char(char_uuid_write, b"Hello ESP32!")
-                    data = await client.read_gatt_char(char_uuid_read)
-                    print("Received from ESP:", data)
-                    data_csv+=str(time.time()-t1)+","+str(data.decode('utf-8'))+"\n"
-                    if key == ord('r') and not recording:
+                    if key == ord('r') and not recording: #if r key pressed begin recording
+                         await client.write_gatt_char(char_uuid_write, b"RECORD")
                          filename = f"recording_{time.strftime('%Y%m%d_%H%M%S')}"
                          print(f"Recording started: {filename}")
-                         out = cv2.VideoWriter(filename+".avi", fourcc, 20.0, (frame.shape[1], frame.shape[0]))
+                         out = cv2.VideoWriter(filename+".avi", fourcc, 20.0, (frame.shape[1], frame.shape[0])) #save data
                          recording = True
-                    if key == ord('s') and recording:
+                    if key == ord('s') and recording: #if s pressed stop recording
                          print("Recording stopped.")
+                         await client.write_gatt_char(char_uuid_write, b"GIVE ME") #send request for data
+                         data=""
+                         while data=="": #wait for data to come
+                             data = str(await client.read_gatt_char(char_uuid_read).decode('utf-8'))
+                             print("Received from ESP:", data)
                          recording = False
                          out.release()
                          out = None
@@ -70,18 +73,28 @@ async def connect_to_esp():
                     #time.sleep(0.1)
         except bleak.exc.BleakDeviceNotFoundError:
             gather_device()
-            save(filename,data_csv)
+            if recording:
+                out = cv2.VideoWriter(filename+".avi", fourcc, 20.0, (frame.shape[1], frame.shape[0]))
+                save(filename,data_csv)
         except OSError:
             gather_device()
-            save(filename,data_csv)
+            if recording:
+                out = cv2.VideoWriter(filename+".avi", fourcc, 20.0, (frame.shape[1], frame.shape[0]))
+                save(filename,data_csv)
         except asyncio.exceptions.TimeoutError:
             gather_device()
-            save(filename,data_csv)
+            if recording:
+                out = cv2.VideoWriter(filename+".avi", fourcc, 20.0, (frame.shape[1], frame.shape[0]))
+                save(filename,data_csv)
         except KeyboardInterrupt:
-            save(filename,data_csv)
+            if recording:
+                out = cv2.VideoWriter(filename+".avi", fourcc, 20.0, (frame.shape[1], frame.shape[0]))
+                save(filename,data_csv)
             break
         except Exception as e:
-            save(filename,data_csv)
+            if recording:
+                out = cv2.VideoWriter(filename+".avi", fourcc, 20.0, (frame.shape[1], frame.shape[0]))
+                save(filename,data_csv)
             print(e)
             gather_device()
 
