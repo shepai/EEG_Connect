@@ -3,6 +3,8 @@ from bleak import BleakClient, BleakScanner
 import bleak
 import time
 import cv2
+import gc
+gc.collect()
 
 async def connect_to_esp():
     devices = await BleakScanner.discover()
@@ -11,7 +13,6 @@ async def connect_to_esp():
         for device in devices:
             print(device)  # Look for your ESP32 in the list
     def save(filename,data):
-        print(data)
         file=open(filename+".csv","w") #open csv
         file.write(str(data)) #save data in bulk
         file.close()
@@ -56,16 +57,27 @@ async def connect_to_esp():
                          recording = True
                     if key == ord('s') and recording: #if s pressed stop recording
                          print("Recording stopped.")
-                         await client.write_gatt_char(char_uuid_write, b"GIVE ME") #send request for data
-                         end=False
-                         data_csv=""
-                         while not end: #wait for data to come
+                         decoded=""
+                         while decoded=="":
+                             await client.write_gatt_char(char_uuid_write, b"GIVE ME") #send request for data
                              data = await client.read_gatt_char(char_uuid_read)
-                             print("Received from ESP:", data)
                              decoded=str(data.decode('utf-8'))
-                             if "END" in decoded:
-                                 end=True
-                             data_csv=decoded.replace("END","")
+                         num=int(decoded)
+                         print("EXPECTING",num,"data packets")
+                         data_csv=""
+                         l=0
+                         added=[]
+                         while l<num: #wait for data to come
+                             await client.write_gatt_char(char_uuid_write, ("GIVE_MANY"+str(l)).encode("utf-8"))
+                             data = await client.read_gatt_char(char_uuid_read)
+                             decoded=str(data.decode('utf-8'))
+                             decoded=decoded.split("--")
+                             if len(decoded)>0 and int(decoded[0])==l and int(decoded[0]) not in added:
+                                 data_csv+=decoded[1]
+                                 added.append(l)
+                                 l+=1
+                             
+                         print(l,"packets recieved")
                          recording = False
                          out.release()
                          out = None
