@@ -17,17 +17,16 @@ async def connect_to_esp():
         file.close()
     t1=time.time()
 
-    cap = cv2.VideoCapture(0)
-    # Define codec
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    
+
+    recording=False
     print("Press 'r' to start recording, 's' to stop, and 'q' to quit.")
-    while 1:
+    quitted=False
+    while not quitted:
         devices = await BleakScanner.discover()
         try:
             data_csv=""
             filename=""
-            esp_address = "30:C6:F7:22:D0:12"  # Replace with your ESP32's MAC address
+            esp_address = "A0:B7:65:63:C8:92"  # Replace with your ESP32's MAC address
             async with BleakClient(esp_address) as client:
                 print(f"Connected to {esp_address}")
 
@@ -39,14 +38,15 @@ async def connect_to_esp():
                 char_uuid_write = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  # Replace with actual UUID
                 await client.write_gatt_char(char_uuid_write, b"Hello ESP32!")
                 char_uuid_read = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  # Replace with actual UUID
-                data = await client.read_gatt_char(char_uuid_read)
-                print("Received from ESP:", data)
+                fourcc = cv2.VideoWriter_fourcc(*'XVID')
                 out = None
                 recording = False
-                while 1: #once successfully connected loop forever (till erros happen)
-                    ret, frame = cap.read() #read camera
-                    if not ret: #if camera breaks 
-                         break
+                cap = cv2.VideoCapture(0)
+                while not quitted: #once successfully connected loop forever (till erros happen)
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    cv2.imshow('Video Feed', frame)
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord('r') and not recording: #if r key pressed begin recording
                          await client.write_gatt_char(char_uuid_write, b"RECORD")
@@ -57,10 +57,15 @@ async def connect_to_esp():
                     if key == ord('s') and recording: #if s pressed stop recording
                          print("Recording stopped.")
                          await client.write_gatt_char(char_uuid_write, b"GIVE ME") #send request for data
-                         data=""
-                         while data=="": #wait for data to come
-                             data = str(await client.read_gatt_char(char_uuid_read).decode('utf-8'))
+                         end=False
+                         data_csv=""
+                         while not end: #wait for data to come
+                             data = await client.read_gatt_char(char_uuid_read)
                              print("Received from ESP:", data)
+                             decoded=str(data.decode('utf-8'))
+                             if "END" in decoded:
+                                 end=True
+                             data_csv=decoded.replace("END","")
                          recording = False
                          out.release()
                          out = None
@@ -69,7 +74,7 @@ async def connect_to_esp():
                          out.write(frame)
 
                     if key == ord('q'):  # Press 'q' to exit
-                         break
+                         quitted=True
                     #time.sleep(0.1)
         except bleak.exc.BleakDeviceNotFoundError:
             gather_device()
@@ -98,5 +103,5 @@ async def connect_to_esp():
             print(e)
             gather_device()
 
-
+        
 asyncio.run(connect_to_esp())
